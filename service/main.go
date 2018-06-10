@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/pborman/uuid"
 	elastic "gopkg.in/olivere/elastic.v3"
@@ -20,7 +21,7 @@ const (
 	//PROJECT_ID = "around-xxx"
 	//BT_INSTANCE = "around-post"
 	// Needs to update this URL if you deploy it to cloud.
-	ES_URL = "http://104.196.215.242:9200"
+	ES_URL = "http://35.226.45.120:9200/"
 )
 
 type Location struct {
@@ -74,6 +75,19 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", nil))
 }
 
+func containsFilteredWords(s *string) bool {
+	filteredWords := []string{
+		"fuck",
+		"100",
+	}
+	for _, word := range filteredWords {
+		if strings.Contains(*s, word) {
+			return true
+		}
+	}
+	return false
+}
+
 func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	fmt.Println("Received one request for search")
 	lat, _ := strconv.ParseFloat(r.URL.Query().Get("lat"), 64)
@@ -122,8 +136,9 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 	for _, item := range searchResult.Each(reflect.TypeOf(typ)) { // instance of
 		p := item.(Post) // p = (Post) item
 		fmt.Printf("Post by %s: %s at lat %v and lon %v\n", p.User, p.Message, p.Location.Lat, p.Location.Lon)
-		// TODO(student homework): Perform filtering based on keywords such as web spam etc.
-		ps = append(ps, p)
+		if !containsFilteredWords(&p.Message) {
+			ps = append(ps, p)
+		}
 
 	}
 	js, err := json.Marshal(ps)
@@ -149,7 +164,6 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 	id := uuid.New()
 	// Save to ES.
 	saveToES(&p, id)
-
 }
 
 // Save a post to ElasticSearch
