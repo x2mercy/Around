@@ -3,12 +3,16 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"reflect"
 	"strconv"
 	"strings"
 
+	"context"
+
+	"cloud.google.com/go/storage"
 	"github.com/pborman/uuid"
 	elastic "gopkg.in/olivere/elastic.v3"
 )
@@ -21,7 +25,8 @@ const (
 	//PROJECT_ID = "around-xxx"
 	//BT_INSTANCE = "around-post"
 	// Needs to update this URL if you deploy it to cloud.
-	ES_URL = "http://35.226.45.120:9200/"
+	ES_URL      = "http://35.226.45.120:9200/"
+	BUCKET_NAME = "post-images-2065071"
 )
 
 type Location struct {
@@ -34,6 +39,7 @@ type Post struct {
 	User     string   `json:"user"`
 	Message  string   `json:"message"`
 	Location Location `json:"location"`
+	Url      string   `json:"url"`
 }
 
 func main() {
@@ -154,16 +160,73 @@ func handlerSearch(w http.ResponseWriter, r *http.Request) {
 
 func handlerPost(w http.ResponseWriter, r *http.Request) {
 	// Parse from body of request to get a json object.
-	fmt.Println("Received one post request")
-	decoder := json.NewDecoder(r.Body)
-	var p Post
-	if err := decoder.Decode(&p); err != nil {
-		panic(err)
+	/*
+		fmt.Println("Received one post request")
+		decoder := json.NewDecoder(r.Body)
+		var p Post
+		if err := decoder.Decode(&p); err != nil {
+			panic(err)
+			return
+		}
+		id := uuid.New()
+		// Save to ES.
+		saveToES(&p, id)
+	*/
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
+
+	// 32 << 20 is the maxMemory param for ParseMultipartForm, equals to 32MB (1MB = 1024 * 1024 bytes = 2^20 bytes)
+	// After you call ParseMultipartForm, the file will be saved in the server memory with maxMemory size.
+	// If the file size is larger than maxMemory, the rest of the data will be saved in a system temporary file.
+	r.ParseMultipartForm(32 << 20)
+
+	// Parse from form data.
+	fmt.Printf("Received one post request %s\n", r.FormValue("message"))
+	lat, _ := strconv.ParseFloat(r.FormValue("lat"), 64)
+	lon, _ := strconv.ParseFloat(r.FormValue("lon"), 64)
+	p := &Post{
+		User:    "1111",
+		Message: r.FormValue("message"),
+		Location: Location{
+			Lat: lat,
+			Lon: lon,
+		},
+	}
+
+	id := uuid.New()
+
+	file, _, err := r.FormFile("image")
+	if err != nil {
+		http.Error(w, "Image is not available", http.StatusInternalServerError)
+		fmt.Printf("Image is not available %v.\n", err)
 		return
 	}
-	id := uuid.New()
+	defer file.Close()
+
+	ctx := context.Background()
+
+	// replace it with your real bucket name.
+	_, attrs, err := saveToGCS(ctx, file, BUCKET_NAME, id)
+	if err != nil {
+		http.Error(w, "GCS is not setup", http.StatusInternalServerError)
+		fmt.Printf("GCS is not setup %v\n", err)
+		return
+	}
+
+	// Update the media link after saving to GCS.
+	p.Url = attrs.MediaLink
+
 	// Save to ES.
-	saveToES(&p, id)
+	saveToES(p, id)
+
+	// Save to BigTable.
+	//saveToBigTable(p, id)
+
+}
+
+func saveToGCS(ctx context.Context, r io.Reader, bucketName, name string) (*storage.ObjectHandle, *storage.ObjectAttrs, error) {
+	// Student questions
 }
 
 // Save a post to ElasticSearch
