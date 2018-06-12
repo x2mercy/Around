@@ -226,7 +226,35 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 }
 
 func saveToGCS(ctx context.Context, r io.Reader, bucketName, name string) (*storage.ObjectHandle, *storage.ObjectAttrs, error) {
-	// Student questions
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer client.Close()
+
+	bucket := client.Bucket(bucketName)
+	// Next check if the bucket exists
+	if _, err = bucket.Attrs(ctx); err != nil {
+		return nil, nil, err
+	}
+
+	obj := bucket.Object(name)
+	w := obj.NewWriter(ctx)
+	if _, err := io.Copy(w, r); err != nil {
+		return nil, nil, err
+	}
+	if err := w.Close(); err != nil {
+		return nil, nil, err
+	}
+
+	if err := obj.ACL().Set(ctx, storage.AllUsers, storage.RoleReader); err != nil {
+		return nil, nil, err
+	}
+
+	attrs, err := obj.Attrs(ctx)
+	fmt.Printf("Post is saved to GCS: %s\n", attrs.MediaLink)
+	return obj, attrs, err
+
 }
 
 // Save a post to ElasticSearch
