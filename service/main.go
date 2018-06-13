@@ -12,10 +12,16 @@ import (
 
 	"context"
 
+	"github.com/auth0/go-jwt-middleware"
+	"github.com/dgrijalva/jwt-go"
+	"github.com/gorilla/mux"
+
 	"cloud.google.com/go/storage"
 	"github.com/pborman/uuid"
 	elastic "gopkg.in/olivere/elastic.v3"
 )
+
+var mySigningKey = []byte("secret")
 
 const (
 	INDEX    = "around"
@@ -76,9 +82,32 @@ func main() {
 	}
 
 	fmt.Println("started-service")
-	http.HandleFunc("/post", handlerPost)
-	http.HandleFunc("/search", handlerSearch)
+	// http.HandleFunc("/post", handlerPost)
+	// http.HandleFunc("/search", handlerSearch)
+	// log.Fatal(http.ListenAndServe(":8080", nil))
+
+	// Here we are instantiating the gorilla/mux router
+	r := mux.NewRouter() //Create a new router on top of the existing http router as we need to check auth.
+
+	var jwtMiddleware = jwtmiddleware.New(jwtmiddleware.Options{
+		ValidationKeyGetter: func(token *jwt.Token) (interface{}, error) {
+			return mySigningKey, nil
+		},
+		SigningMethod: jwt.SigningMethodHS256,
+	}) //Create a new JWT middleware with a Option that uses the key ‘mySigningKey’
+	//such that we know this token is from our server.
+	// The signing method is the default HS256 algorithm such that data is encrypted.
+
+	r.Handle("/post", jwtMiddleware.Handler(http.HandlerFunc(handlerPost))).Methods("POST")
+	//It means we use jwt middleware to manage these endpoints and if they don’t have valid token, we will reject them.
+
+	r.Handle("/search", jwtMiddleware.Handler(http.HandlerFunc(handlerSearch))).Methods("GET")
+	r.Handle("/login", http.HandlerFunc(loginHandler)).Methods("POST")
+	r.Handle("/signup", http.HandlerFunc(signupHandler)).Methods("POST")
+
+	http.Handle("/", r)
 	log.Fatal(http.ListenAndServe(":8080", nil))
+
 }
 
 func containsFilteredWords(s *string) bool {
@@ -176,6 +205,10 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,Authorization")
 
+	user := r.Context().Value("user")
+	claims := user.(*jwt.Token).Claims
+	username := claims.(jwt.MapClaims)["username"]
+
 	// 32 << 20 is the maxMemory param for ParseMultipartForm, equals to 32MB (1MB = 1024 * 1024 bytes = 2^20 bytes)
 	// After you call ParseMultipartForm, the file will be saved in the server memory with maxMemory size.
 	// If the file size is larger than maxMemory, the rest of the data will be saved in a system temporary file.
@@ -186,7 +219,8 @@ func handlerPost(w http.ResponseWriter, r *http.Request) {
 	lat, _ := strconv.ParseFloat(r.FormValue("lat"), 64)
 	lon, _ := strconv.ParseFloat(r.FormValue("lon"), 64)
 	p := &Post{
-		User:    "1111",
+
+		User:    username.(string),
 		Message: r.FormValue("message"),
 		Location: Location{
 			Lat: lat,
